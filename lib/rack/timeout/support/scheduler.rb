@@ -51,7 +51,7 @@ class Rack::Timeout::Scheduler
     def run!
       super
     ensure
-      self.time = @start + @every * (@iter += 1) until time >= Time.now
+      self.time = @start + @every * (@iter += 1) until time >= ::Rack::Timeout.now
     end
   end
 
@@ -76,20 +76,20 @@ class Rack::Timeout::Scheduler
   # the actual runner thread loop
   def run_loop!
     Thread.current.abort_on_exception = true                       # always be aborting
-    sleep_for, run, last_run = nil, nil, Time.now                  # sleep_for: how long to sleep before next run; last_run: time of last run; run: just initializing it outside of the synchronize scope, will contain events to run now
+    sleep_for, run, last_run = nil, nil, ::Rack::Timeout.now                  # sleep_for: how long to sleep before next run; last_run: time of last run; run: just initializing it outside of the synchronize scope, will contain events to run now
     loop do                                                        # begin event reader loop
       @mx_events.synchronize {                                     #
         @events.reject!(&:cancelled?)                              # get rid of cancelled events
         if @events.empty?                                          # if there are no further events …
           return if @joined                                        # exit the run loop if this runner thread has been joined (the thread will die and the join will return)
-          return if Time.now - last_run > MAX_IDLE_SECS            # exit the run loop if done nothing for the past MAX_IDLE_SECS seconds
+          return if ::Rack::Timeout.now - last_run > MAX_IDLE_SECS            # exit the run loop if done nothing for the past MAX_IDLE_SECS seconds
           sleep_for = MAX_IDLE_SECS                                # sleep for MAX_IDLE_SECS (mind it that we get awaken when new events are scheduled)
         else                                                       #
-          sleep_for = [@events.map(&:time).min - Time.now, 0].max  # if we have events, set to sleep until it's time for the next one to run. (the max bit ensure we don't have negative sleep times)
+          sleep_for = [@events.map(&:time).min - ::Rack::Timeout.now, 0].max  # if we have events, set to sleep until it's time for the next one to run. (the max bit ensure we don't have negative sleep times)
         end                                                        #
         @mx_events.sleep sleep_for                                 # do sleep
                                                                    #
-        now = Time.now                                             #
+        now = ::Rack::Timeout.now                                             #
         run, defer = @events.partition { |ev| ev.time <= now }     # separate events to run now and events to run later
         defer += run.select { |ev| ev.is_a? RepeatEvent }          # repeat events both run and are deferred
         @events.replace(defer)                                     # keep only events to run later
@@ -97,7 +97,7 @@ class Rack::Timeout::Scheduler
                                                                    #
       next if run.empty?                                           # done here if there's nothing to run now
       run.sort_by(&:time).each { |ev| ev.run! }                    # run the events scheduled to run now
-      last_run = Time.now                                          # store that we did run things at this time, go immediately on to the next loop iteration as it may be time to run more things
+      last_run = ::Rack::Timeout.now                                          # store that we did run things at this time, go immediately on to the next loop iteration as it may be time to run more things
     end
   end
 
@@ -141,12 +141,12 @@ class Rack::Timeout::Scheduler
 
   # schedules a block to run in the given number of seconds; returns the created event object
   def run_in(secs, &block)
-    run_at(Time.now + secs, &block)
+    run_at(::Rack::Timeout.now + secs, &block)
   end
 
   # schedules a block to run every x seconds; returns the created event object
   def run_every(seconds, &block)
-    schedule RepeatEvent.new(Time.now, block, seconds)
+    schedule RepeatEvent.new(::Rack::Timeout.now, block, seconds)
   end
 
 
