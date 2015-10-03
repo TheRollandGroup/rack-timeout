@@ -4,6 +4,26 @@ require_relative "support/scheduler"
 require_relative "support/timeout"
 
 module Rack
+
+  module EnvHijack
+    attr_reader :__callstack_logs
+
+    def self.extended obj
+      obj.instance_variable_set(:@__callstack_logs, [])
+      (obj.class.instance_methods(false) - instance_methods - [:inspect]).each do |m|
+        obj.singleton_class.instance_exec(m) { |m| alias_method "__#{m}_without_logging", m }
+        obj.define_singleton_method(m) do |*a, &b|
+          __log_method_call m, *a, &b
+          super *a, &b
+        end
+      end
+    end
+
+    def __log_method_call m, *a, &b
+      @__callstack_logs << [m, a, b, caller(2), __size_without_logging, Time.now, Thread.current.object_id]
+    end
+  end
+
   class Timeout
     module ExceptionWithEnv # shared by the following exceptions, allows them to receive the current env
       attr :env
@@ -82,6 +102,7 @@ module Rack
       info.id ||= env["HTTP_X_REQUEST_ID"] || SecureRandom.hex
       @info = info
       @env_id = env.object_id
+      env.extend EnvHijack
 
       time_started_service = Time.now                      # The time the request started being processed by rack
       time_started_wait    = RT._read_x_request_start(env) # The time the request was initially received by the web server (if available)
@@ -171,11 +192,28 @@ module Rack
     def _set_state!(env, state)
       raise "Invalid state: #{state.inspect}" unless VALID_STATES.include? state
       info = env[ENV_INFO_KEY]
-      env_keys = env.keys.reject { |k| k =~ /^(rack|action_dispatch|action_controller|puma)\.|^[A-Z_]+$/ }.sort.inspect
-      # warn caller
-      at = caller.grep(/\/core.rb:/).map { |s| s[/:(\d+):in `/, 1] }.join(",")
-      warn "source=rack-timeout-debug info-present=#{!info.nil?} env-same=#{env.object_id==@env_id} env-keys-count=#{env.keys.length} orig-info-req-id=#{@info.id} thread=#{Thread.current.object_id} time=#{Time.now.utc.strftime('%T.%L')} at=#{at}\n"
-      return unless info.is_a?(RequestDetails)
+      if info.nil?
+        at = caller.grep(/\/core.rb:/).map { |s| s[/:(\d+):in `/, 1] }.join(",")
+        size = env.__size_without_logging
+        key = env.__keys_without_logging.first if size == 1
+        warn "source=rack-timeout-debug info-present=#{!info.nil?} env-keys-count=#{size}#{" key=#{key}" if key} req-id=#{@info.id} thread=#{Thread.current.object_id} time=#{Time.now.utc.strftime('%T.%L')} at=#{at}\n"
+        pre = "source=rack-timeout-debug req-id=#{@info.id}"
+        stacklog = env.__callstack_logs.each_with_index do |(m,a,b,stack,size,t,thr),ix|
+          next if %i{ [] default fetch }.include? m
+          ixs = ix.to_s.rjust(3, '0')
+          args = a.map{|a|
+            case a
+            when Symbol, String, Numeric, NilClass, true, false; a.inspect
+            when Array; "[#{a.size}]"
+            when Hash; "{#{a.size}}"
+            else "<#{a.class.name}>"
+            end
+          }.join(',')
+          warn "#{pre} stack=#{ixs}---- thread=#{thr} time=#{t.strftime('%T.%L')} size=#{size} call=#{m}(#{args})#{'{}' if b}\n"
+          stack.each_with_index { |l,ix1| warn "#{pre} stack=#{ixs}-#{ix1.to_s.rjust(3, '0')} #{l}" }
+        end
+        return
+      end
 
       info.state = state
       RT.notify_state_change_observers(env)
