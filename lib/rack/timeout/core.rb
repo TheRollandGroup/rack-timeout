@@ -87,22 +87,25 @@ module Rack
       effective_overtime   = (RT.wait_overtime && RT._request_has_body?(env)) ? RT.wait_overtime : 0 # additional wait timeout (if set and applicable)
       seconds_service_left = nil
 
+      # handle path-based timeout overrides
+      service_timeout = RT.service_timeout
+      wait_timeout = RT.wait_timeout
+      if path_timeout = RT.path_timeouts.find { |pto| !!(env["PATH_INFO"] =~ pto[:path]) }
+        service_timeout = wait_timeout = path_timeout[:timeout]
+        service_timeout = wait_timeout = false if path_timeout[:timeout] && path_timeout[:timeout].zero?
+      end
+
       # if X-Request-Start is present and wait_timeout is set, expire requests older than wait_timeout (+wait_overtime when applicable)
-      if time_started_wait && RT.wait_timeout
+      if time_started_wait && wait_timeout
         seconds_waited          = time_started_service - time_started_wait # how long it took between the web server first receiving the request and rack being able to handle it
         seconds_waited          = 0 if seconds_waited < 0                  # make up for potential time drift between the routing server and the application server
-        final_wait_timeout      = RT.wait_timeout + effective_overtime     # how long the request will be allowed to have waited
+        final_wait_timeout      = wait_timeout + effective_overtime     # how long the request will be allowed to have waited
         seconds_service_left    = final_wait_timeout - seconds_waited      # first calculation of service timeout (relevant if request doesn't get expired, may be overriden later)
         info.wait, info.timeout = seconds_waited, final_wait_timeout       # updating the info properties; info.timeout will be the wait timeout at this point
         if seconds_service_left <= 0 # expire requests that have waited for too long in the queue (as they are assumed to have been dropped by the web server / routing layer at this point)
           RT._set_state! env, :expired
           raise RequestExpiryError.new(env), "Request older than #{info.ms(:timeout)}."
         end
-      end
-
-      service_timeout = RT.service_timeout
-      if path_timeout = RT.path_timeouts.find { |pto| !!(env["PATH_INFO"] =~ pto[:path]) }
-        service_timeout = path_timeout[:timeout]
       end
 
       # pass request through if service_timeout is false (i.e., don't time it out at all.)
