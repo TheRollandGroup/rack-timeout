@@ -30,7 +30,7 @@ To use a custom timeout, create an initializer file:
 # config/initializers/rack_timeout.rb
 Rack::Timeout.timeout = 5  # seconds
 Rack::Timeout.path_timeouts = [
-  { path: /path-regex/i , timeout: 15 }  #paths matching /path-regex/i will use a 15 second timeout
+  { path: /path-regex/i , timeout: 15 }  # paths matching /path-regex/i will use a 15 second timeout
 ]
 ```
 
@@ -52,7 +52,7 @@ Rails.application.config.middleware.insert_before Rack::Runtime, Rack::Timeout
 # customize seconds before timeout
 Rack::Timeout.timeout = 5
 Rack::Timeout.path_timeouts = [
-  { path: /path-regex/i , timeout: 15 }  #paths matching /path-regex/i will use a 15 second timeout
+  { path: /path-regex/i , timeout: 15 }  # paths matching /path-regex/i will use a 15 second timeout
 ```
 
 ### Sinatra and other Rack apps
@@ -63,7 +63,7 @@ require "rack-timeout"
 use Rack::Timeout          # Call as early as possible so rack-timeout runs before all other middleware.
 Rack::Timeout.timeout = 5  # Recommended. If omitted, defaults to 15 seconds.
 Rack::Timeout.path_timeouts = [
-  { path: /path-regex/i , timeout: 15 }  #paths matching /path-regex/i will use a 15 second timeout
+  { path: /path-regex/i , timeout: 15 }  # paths matching /path-regex/i will use a 15 second timeout
 ```
 
 
