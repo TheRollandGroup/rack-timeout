@@ -69,6 +69,7 @@ module Rack
       alias_method :timeout=, :service_timeout= # legacy compatibility setter
       attr_accessor :service_past_wait    # when false, reduces the request's computed timeout from the service_timeout value if the complete request lifetime (wait + service) would have been longer than wait_timeout (+ wait_overtime when applicable). When true, always uses the service_timeout value.
       @service_past_wait = false          # we default to false under the assumption that the router would drop a request that's not responded within wait_timeout, thus being there no point in servicing beyond seconds_service_left (see code further down) up until service_timeout.
+      attr_accessor :path_timeouts  # an array of hashes of the form { path: <regex>, timeout: (false|[0-9]+) }. All requests are matched against the paths. The timeout of the first matched path is used instead of the global setting.
     end
 
     def initialize(app)
@@ -99,12 +100,17 @@ module Rack
         end
       end
 
+      service_timeout = RT.service_timeout
+      if path_timeout = RT.path_timeouts.find { |pto| !!(env["PATH_INFO"] =~ pto[:path]) }
+        service_timeout = path_timeout[:timeout]
+      end
+
       # pass request through if service_timeout is false (i.e., don't time it out at all.)
-      return @app.call(env) unless RT.service_timeout
+      return @app.call(env) unless service_timeout
 
       # compute actual timeout to be used for this request; if service_past_wait is true, this is just service_timeout. If false (the default), and wait time was determined, we'll use the shortest value between seconds_service_left and service_timeout. See comment above at service_past_wait for justification.
-      info.timeout = RT.service_timeout # nice and simple, when service_past_wait is true, not so much otherwise:
-      info.timeout = seconds_service_left if !RT.service_past_wait && seconds_service_left && seconds_service_left > 0 && seconds_service_left < RT.service_timeout
+      info.timeout = service_timeout # nice and simple, when service_past_wait is true, not so much otherwise:
+      info.timeout = seconds_service_left if !RT.service_past_wait && seconds_service_left && seconds_service_left > 0 && seconds_service_left < service_timeout
 
       RT._set_state! env, :ready                            # we're good to go, but have done nothing yet
 
